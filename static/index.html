@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cert Tool</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <style>
+    :root{
+      --control: #f1f5f9;
+      --panel: #ffffff;
+      --soft-border: #e6eef6;
+      --accent: #2563eb;
+      --muted: #94a3b8;
+    }
+
+    .segmented { display:inline-flex; gap:8px; padding:6px; border-radius:999px; background:var(--control); border:1px solid var(--soft-border); }
+    .segmented button { padding:10px 14px; border-radius:999px; font-weight:700; font-size:0.95rem; min-width:80px; outline: none; border: none; cursor: pointer; }
+    .seg-on { background: linear-gradient(180deg,var(--panel),rgba(255,255,255,0.92)); color:var(--accent); box-shadow: 0 2px 8px rgba(11,23,32,0.06) inset; border:1px solid var(--soft-border);}    
+    .seg-off { color:var(--muted); background:transparent; }
+
+    body { -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+    .card-outer { width: 100%; max-width: 1000px; margin: 0 auto; }
+    .card { background: white; border-radius: 16px; box-shadow: 0 10px 30px rgba(2,6,23,0.08); border: 1px solid rgba(15,23,42,0.04); overflow: visible; display:flex; flex-direction: column; }
+    .card-header { padding: 24px 32px; }
+    .card-body { padding: 0 32px 32px 32px; }
+
+    /* removed fixed internal scrolling so card can grow dynamically */
+    .tab-panel { display: none; opacity: 0; transform: translateY(6px) scale(0.997); transition: opacity 260ms cubic-bezier(.2,.9,.2,1), transform 260ms cubic-bezier(.2,.9,.2,1); }
+    .tab-panel.active { display: block; opacity: 1; transform: translateY(0) scale(1); }
+
+    .custom-file { position: relative; border-radius: 0.5rem; overflow: hidden; }
+    .custom-file input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 2; }
+    .file-ui { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 0.5rem 0.75rem; border: 1px solid var(--soft-border); background: var(--panel); color: #0f172a; border-radius: 0.5rem; min-height: 44px; box-sizing: border-box; }
+    .file-left { display: flex; gap: 12px; align-items: center; min-width: 0; }
+    .file-icon { width:36px; height:36px; border-radius:8px; background:linear-gradient(180deg,#eef2ff,#eef7ff); display:flex; align-items:center; justify-content:center; flex-shrink:0; font-weight:700; color:#4338ca; }
+    .file-meta { min-width: 0; overflow: hidden; }
+    .file-name { font-weight:600; font-size:0.94rem; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .file-sub { font-size:0.82rem; color:var(--muted); }
+    .file-action { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+    .file-browse { padding:0.4rem 0.7rem; border-radius:8px; border:1px solid var(--soft-border); background:transparent; font-weight:700; font-size:0.85rem; color:var(--accent); white-space:nowrap; }
+    .file-empty { color: var(--muted); font-weight:600; }
+
+    input[type="file"]::file-selector-button { display: none; }
+
+    pre { white-space: pre-wrap; word-break: break-word; }
+    .mono-break { word-break: break-all; }
+
+    .sub-panel { background: transparent; border-radius: 12px; padding: 1.25rem 0; }
+    .sub-panel .panel-title { font-weight: 600; color: #0f172a; }
+
+    .file-indicator { font-size: 0.85rem; color: #475569; }
+    .warning { color: #b91c1c; font-size: 0.9rem; }
+    .muted { color: #64748b; font-size: 0.9rem; }
+
+    .mono-scroll { max-height: 40vh; overflow: auto; }
+
+    @media (max-width: 640px) {
+      .card-header, .card-body { padding-left: 20px; padding-right: 20px; }
+    }
+  </style>
+</head>
+<body class="bg-slate-100 font-sans min-h-screen flex items-start justify-center py-8 px-4">
+
+  <div class="card-outer">
+    <div class="card">
+      <div class="card-header">
+        <div class="flex items-start justify-between gap-6 flex-wrap">
+          <div class="flex-1 min-w-0">
+            <h1 class="text-2xl sm:text-3xl font-bold text-slate-800">Cert Tool</h1>
+            <p class="text-sm sm:text-base text-slate-600 mt-1">A certificate revocation and provisioning profile testing utility.</p>
+          </div>
+
+          <div class="mt-3 sm:mt-0">
+            <div class="segmented" role="tablist" aria-label="Choose view">
+              <button id="seg-p12" class="seg-on" data-tab="p12" aria-controls="panel-p12" aria-selected="true">P12</button>
+              <button id="seg-ipa" class="seg-off" data-tab="ipa" aria-controls="panel-ipa" aria-selected="false">IPA</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-4 text-xs text-slate-500">Author: https://github.com/RipeStore</div>
+      </div>
+
+      <div class="card-body">
+        <div class="tab-panel active" id="panel-p12">
+          <div class="sub-panel">
+            <h2 class="panel-title text-lg sm:text-xl">PKCS#12 and Apple Provisioning Profile</h2>
+            <p class="text-sm text-slate-600 mt-1">Upload a .p12 and optionally a .mobileprovision to compare.</p>
+
+            <form id="uploadFormP12" class="mt-4 space-y-4" enctype="multipart/form-data">
+              <div>
+                <label for="p12file" class="block text-sm font-medium text-slate-700 mb-1">P12 (required)</label>
+
+                <div class="custom-file">
+                  <div class="file-ui" id="p12-ui">
+                    <div class="file-left">
+                      <div class="file-icon">P12</div>
+                      <div class="file-meta">
+                        <div id="p12-file-name" class="file-name file-empty">No file selected</div>
+                        <div id="p12-file-sub" class="file-sub">Accepts .p12, .pfx (max 3 MB)</div>
+                      </div>
+                    </div>
+                    <div class="file-action">
+                      <div class="file-browse">Browse</div>
+                    </div>
+                  </div>
+                  <input type="file" id="p12file" name="p12file" required accept=".p12,.pfx" />
+                </div>
+
+                <div id="p12Info" class="mt-2 file-indicator hidden"></div>
+                <div id="p12Warning" class="mt-1 warning hidden"></div>
+              </div>
+
+              <div>
+                <label for="password" class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+                <input type="password" id="password" name="password" placeholder="Password (if any)"
+                  class="w-full px-4 py-2 border border-slate-300 rounded-lg placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500" />
+              </div>
+
+              <div>
+                <label for="mobileprovision" class="block text-sm font-medium text-slate-700 mb-1">Embedded mobileprovision (optional)</label>
+
+                <div class="custom-file">
+                  <div class="file-ui" id="mp-ui">
+                    <div class="file-left">
+                      <div class="file-icon">MP</div>
+                      <div class="file-meta">
+                        <div id="mp-file-name" class="file-name file-empty">No file selected</div>
+                        <div id="mp-file-sub" class="file-sub">Accepts .mobileprovision, .plist (max 3 MB)</div>
+                      </div>
+                    </div>
+                    <div class="file-action">
+                      <div class="file-browse">Browse</div>
+                    </div>
+                  </div>
+                  <input type="file" id="mobileprovision" name="mobileprovision" accept=".mobileprovision,.plist" />
+                </div>
+
+                <div id="mpInfo" class="mt-2 file-indicator hidden"></div>
+                <div id="mpSummary" class="mt-2 muted hidden">
+                  <div id="mpResultCard" class="hidden mt-2 rounded-xl p-4 bg-slate-800 text-slate-100">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <h3 id="mpProfileName" class="text-lg font-bold text-white truncate"></h3>
+                        <p id="mpSigner" class="text-sm text-slate-300 mt-1 truncate"></p>
+                        <p id="mpTeamID" class="text-xs font-mono text-slate-300"></p>
+                        <p id="mpExpiration" class="text-sm text-slate-300 mt-1"></p>
+                      </div>
+                      <div>
+                        <div class="mt-2 space-y-2">
+                          <div>
+                            <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Enterprise</span><span id="mpMeterEnterpriseText">0%</span></div>
+                            <div class="w-full bg-slate-700 rounded-full h-2.5"><div id="mpMeterEnterprise" class="meter-bar rounded-full" style="width:0%"></div></div>
+                          </div>
+                          <div>
+                            <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Ad-Hoc</span><span id="mpMeterAdHocText">0%</span></div>
+                            <div class="w-full bg-slate-700 rounded-full h-2.5"><div id="mpMeterAdHoc" class="meter-bar rounded-full" style="width:0%"></div></div>
+                          </div>
+                          <div>
+                            <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Development</span><span id="mpMeterDevText">0%</span></div>
+                            <div class="w-full bg-slate-700 rounded-full h-2.5"><div id="mpMeterDev" class="meter-bar rounded-full" style="width:0%"></div></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="mt-4 pt-4 border-t border-slate-700">
+                      <h4 class="font-semibold text-slate-100 mb-2">Provisioned Devices</h4>
+                      <div id="mpDeviceCount" class="text-sm text-slate-300 mb-2">Devices: <span id="mpDeviceCountVal">0</span></div>
+                      <div id="mpDeviceList" class="bg-slate-700/40 p-3 rounded-md text-xs font-mono max-h-52 overflow-auto mono-break hidden"></div>
+                    </div>
+
+                  </div>
+                </div>
+                <div id="mpError" class="mt-1 warning hidden"></div>
+                <p class="text-xs text-slate-500 mt-1">Provide a mobileprovision file (optional) to verify whether it contains the same certificate as the P12. Provisioning profile summary will appear after you press "Check Status".</p>
+              </div>
+
+              <div class="flex gap-3">
+                <button type="submit" id="submitButtonP12" class="flex-1 inline-flex items-center justify-center gap-3 bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" disabled>
+                  <svg id="spinnerP12" class="animate-spin hidden h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  <span id="buttonTextP12">Check Status</span>
+                </button>
+                <button type="button" id="resetP12" class="inline-flex items-center justify-center gap-2 py-2 px-4 border border-slate-200 rounded-lg text-sm text-slate-700 hover:bg-slate-50">Reset</button>
+              </div>
+            </form>
+
+            <div id="resultCardP12" class="mt-4 hidden rounded-lg p-4"></div>
+
+            <div id="moreInfoP12" class="hidden mt-4">
+              <button onclick="toggleDetails('detailsP12')" class="text-sm text-indigo-600 font-medium">Show Full Cert Info</button>
+              <div id="detailsP12" class="mt-3 hidden">
+                <pre id="resultCertInfoP12" class="text-xs mono-break"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="panel-ipa">
+          <div class="sub-panel">
+            <h2 class="panel-title text-lg sm:text-xl">IPA Analyzer</h2>
+            <p class="text-sm text-slate-600 mt-1">Check provisioning information and certificate revocation status by submitting an IPA.</p>
+
+            <form id="uploadFormIPA" class="mt-4 space-y-4">
+              <div>
+                <label for="ipafile" class="block text-sm font-medium text-slate-700 mb-1">IPA File</label>
+
+                <div class="custom-file">
+                  <div class="file-ui" id="ipa-ui">
+                    <div class="file-left">
+                      <div class="file-icon">IPA</div>
+                      <div class="file-meta">
+                        <div id="ipa-file-name" class="file-name file-empty">No file selected</div>
+                        <div id="ipa-file-sub" class="file-sub">Accepts .ipa (max 3 MB)</div>
+                      </div>
+                    </div>
+                    <div class="file-action">
+                      <div class="file-browse">Browse</div>
+                    </div>
+                  </div>
+                  <input type="file" id="ipafile" name="ipafile" required accept=".ipa" />
+                </div>
+              </div>
+
+              <div class="flex gap-3">
+                <button type="submit" id="submitButtonIPA" class="flex-1 inline-flex items-center justify-center gap-3 bg-indigo-600 text-white font-semibold py-2 px-3 rounded-lg shadow hover:bg-indigo-700"> 
+                  <svg id="spinnerIPA" class="animate-spin hidden h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                  <span id="buttonTextIPA">Analyze IPA</span>
+                </button>
+                <button type="button" id="resetIPA" class="inline-flex items-center justify-center gap-2 py-2 px-4 border border-slate-200 rounded-lg text-sm text-slate-700 hover:bg-slate-50">Reset</button>
+              </div>
+            </form>
+
+            <div id="statusIPA" class="mt-3 text-sm text-slate-600 hidden"></div>
+
+            <div id="resultCardIPA" class="hidden mt-4 rounded-xl p-4 bg-slate-800 text-slate-100">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h3 id="ipaProfileName" class="text-lg font-bold text-white truncate"></h3>
+                  <p id="ipaSigner" class="text-sm text-slate-300 mt-1 truncate"></p>
+                  <p id="ipaTeamID" class="text-xs font-mono text-slate-300"></p>
+                  <p id="ipaExpiration" class="text-sm text-slate-300 mt-1"></p>
+                </div>
+                <div>
+                  <div class="mt-2 space-y-2">
+                    <div>
+                      <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Enterprise</span><span id="meterEnterpriseText">0%</span></div>
+                      <div class="w-full bg-slate-700 rounded-full h-2.5"><div id="meterEnterprise" class="meter-bar rounded-full" style="width:0%"></div></div>
+                    </div>
+                    <div>
+                      <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Ad-Hoc</span><span id="meterAdHocText">0%</span></div>
+                      <div class="w-full bg-slate-700 rounded-full h-2.5"><div id="meterAdHoc" class="meter-bar rounded-full" style="width:0%"></div></div>
+                    </div>
+                    <div>
+                      <div class="flex justify-between text-xs text-slate-300 mb-1"><span>Development</span><span id="meterDevText">0%</span></div>
+                      <div class="w-full bg-slate-700 rounded-full h-2.5"><div id="meterDev" class="meter-bar rounded-full" style="width:0%"></div></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-4 border-t border-slate-700">
+                <h4 class="font-semibold text-slate-100 mb-2">Certificate Status</h4>
+                <div id="ocspResultsContainer" class="space-y-3"></div>
+              </div>
+
+              <div id="moreInfoIPA" class="mt-4 hidden">
+                <button onclick="toggleDetails('detailsIPA')" class="text-sm text-indigo-300">Show Provisioned Devices (<span id="deviceCount">0</span>)</button>
+                <div id="detailsIPA" class="mt-3 hidden">
+                  <div id="deviceList" class="bg-slate-700/40 p-3 rounded-md text-xs font-mono max-h-52 overflow-auto mono-break"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
+
+    const icons = {
+      good: '<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>',
+      revoked: '<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>',
+      error: '<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>',
+      processing: '<svg class="h-6 w-6 text-white animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>'
+    };
+
+    const styles = {
+      good: { bg: 'bg-green-600', text: 'text-green-100', iconBg: 'bg-green-500' },
+      revoked: { bg: 'bg-red-600', text: 'text-red-100', iconBg: 'bg-red-500' },
+      error: { bg: 'bg-red-600', text: 'text-red-100', iconBg: 'bg-red-500' },
+      processing: { bg: 'bg-blue-600', text: 'text-blue-100', iconBg: 'bg-blue-500' }
+    };
+
+    let els = {};
+
+    function showTab(tabName) {
+      document.querySelectorAll('.tab-panel').forEach(p => {
+        if (p.id === 'panel-' + tabName) {
+          p.classList.add('active');
+          p.setAttribute('aria-hidden', 'false');
+        } else {
+          p.classList.remove('active');
+          p.setAttribute('aria-hidden', 'true');
+        }
+      });
+
+      document.querySelectorAll('.segmented button').forEach(btn => {
+        const isTarget = btn.dataset.tab === tabName;
+        btn.classList.toggle('seg-on', isTarget);
+        btn.classList.toggle('seg-off', !isTarget);
+        btn.setAttribute('aria-selected', isTarget ? 'true' : 'false');
+      });
+
+      resetP12Form();
+      resetIPAForm();
+    }
+
+    function toggleDetails(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.classList.toggle('hidden');
+    }
+
+    function setLoadingP12(isLoading) {
+      if (!els.submitButtonP12) return;
+      els.submitButtonP12.disabled = isLoading;
+      els.spinnerP12.classList.toggle('hidden', !isLoading);
+      els.buttonTextP12.textContent = isLoading ? 'Processing...' : 'Check Status';
+    }
+
+    function resetP12Form() {
+      if (!els.uploadFormP12) return;
+      els.uploadFormP12.reset();
+      document.getElementById('p12-file-name').textContent = 'No file selected';
+      document.getElementById('p12-file-name').classList.add('file-empty');
+      document.getElementById('p12-file-sub').textContent = 'Accepts .p12, .pfx (max 3 MB)';
+
+      document.getElementById('mp-file-name').textContent = 'No file selected';
+      document.getElementById('mp-file-name').classList.add('file-empty');
+      document.getElementById('mp-file-sub').textContent = 'Accepts .mobileprovision, .plist (max 3 MB)';
+
+      document.getElementById('resultCardP12').className = 'mt-4 hidden rounded-lg p-4';
+      document.getElementById('detailsP12').classList.add('hidden');
+      document.getElementById('moreInfoP12').classList.add('hidden');
+
+      // hide MP summary until check status pressed
+      document.getElementById('mpInfo').classList.add('hidden');
+      document.getElementById('mpSummary').classList.add('hidden');
+      document.getElementById('mpResultCard').classList.add('hidden');
+      document.getElementById('mpDeviceList').classList.add('hidden');
+      document.getElementById('mpError').classList.add('hidden');
+
+      document.getElementById('p12Warning').classList.add('hidden');
+      setLoadingP12(false);
+      validateP12Form();
+    }
+
+    function displayResultP12(result) {
+      const status = (result.status || result.Status || 'error').toLowerCase();
+      const style = styles[status] || styles.error;
+      const rc = document.getElementById('resultCardP12');
+      rc.className = `mt-4 rounded-lg p-4 ${style.bg} ${style.text}`;
+      const serial = result.serial || result.SerialNumber || result.serialNumber || '';
+      const certInfo = result.cert_info || result.CertInfo || result.certInfo || '';
+      const revokedAt = result.revoked_at || result.RevokedAt || '';
+      const mpMatch = (typeof result.mp_match !== 'undefined') ? result.mp_match : (typeof result.MPMatch !== 'undefined' ? result.MPMatch : undefined);
+      const mpMessage = result.mp_message || result.MPMessage || result.mpMessage || '';
+      rc.innerHTML = `
+        <div class="flex gap-3 items-start">
+          <div class="${style.iconBg} p-2 rounded-full flex items-center justify-center">${icons[status] || icons.error}</div>
+          <div class="flex-1">
+            <div class="font-semibold text-lg">${(status.charAt(0).toUpperCase() + status.slice(1))}</div>
+            <div class="mt-1 text-sm opacity-90">${result.message || result.Message || 'No details provided.'}</div>
+            <div class="mt-3 text-xs mono-break">
+              ${serial ? `<div><strong>Serial:</strong> <span class="font-mono">${serial}</span></div>` : ''}
+              ${revokedAt ? `<div><strong>Revoked:</strong> ${new Date(revokedAt).toLocaleString()}</div>` : ''}
+            </div>
+
+            ${ (typeof mpMatch !== 'undefined' || mpMessage) ? `
+            <div class="mt-3 text-sm">
+              <div class="font-semibold">MobileProvision check</div>
+              <div class="text-xs mt-1">${mpMessage || (mpMatch ? 'mobileprovision appears to contain a matching certificate' : 'no matching certificate found in mobileprovision')}</div>
+              ${ (typeof mpMatch !== 'undefined') ? `<div class="mt-2 text-xs"><strong>Match:</strong> ${mpMatch ? 'Yes' : 'No'}</div>` : '' }
+            </div>` : '' }
+          </div>
+        </div>
+      `;
+
+      if (certInfo) {
+        const more = document.getElementById('moreInfoP12');
+        more.classList.remove('hidden');
+        document.getElementById('resultCertInfoP12').textContent = certInfo;
+      }
+    }
+
+    async function handleP12Submit(e) {
+      e.preventDefault();
+      setLoadingP12(true);
+      displayResultP12({ status: 'processing', message: 'Uploading and queueing job...' });
+
+      const formEl = els.uploadFormP12;
+      const p12file = document.getElementById('p12file').files[0];
+      if (!p12file) {
+        setLoadingP12(false);
+        document.getElementById('p12Warning').textContent = 'Please select a P12 file.';
+        document.getElementById('p12Warning').classList.remove('hidden');
+        return;
+      }
+      if (p12file.size > MAX_UPLOAD_BYTES) {
+        setLoadingP12(false);
+        document.getElementById('p12Warning').textContent = `P12 exceeds max size (${(MAX_UPLOAD_BYTES/1024/1024).toFixed(1)} MB).`;
+        document.getElementById('p12Warning').classList.remove('hidden');
+        return;
+      }
+
+      // If a mobileprovision was selected, parse and show its summary now (only when Check Status pressed).
+      const mpFile = document.getElementById('mobileprovision').files[0];
+      if (mpFile) {
+        document.getElementById('mpInfo').classList.remove('hidden');
+        document.getElementById('mpInfo').textContent = `Selected: ${mpFile.name} — ${(mpFile.size/1024).toFixed(1)} KB`;
+        if (mpFile.size > MAX_UPLOAD_BYTES) {
+          document.getElementById('mpError').textContent = `Warning: mobileprovision file is larger than ${(MAX_UPLOAD_BYTES/1024/1024).toFixed(1)} MB; server may reject it.`;
+          document.getElementById('mpError').classList.remove('hidden');
+        } else {
+          document.getElementById('mpError').classList.add('hidden');
+        }
+
+        try {
+          const ab = await mpFile.arrayBuffer();
+          const profile = parseProvisioningProfile(ab);
+          displayMPProfileSummary(profile);
+        } catch (err) {
+          document.getElementById('mpError').textContent = `Failed to parse mobileprovision: ${err.message}`;
+          document.getElementById('mpError').classList.remove('hidden');
+        }
+      }
+
+      const formData = new FormData(formEl);
+      try {
+        const uploadResponse = await fetch('/upload-p12', { method: 'POST', body: formData });
+        if (!uploadResponse.ok) {
+          const errText = await uploadResponse.text().catch(()=>null);
+          throw new Error(errText || 'Upload failed');
+        }
+        const body = await uploadResponse.json();
+        const id = body.id || body.ID || '';
+        if (!id) throw new Error('Server returned no job id');
+        pollForResultP12(id);
+      } catch (err) {
+        setLoadingP12(false);
+        displayResultP12({ status: 'error', message: err.message });
+      }
+    }
+
+    function pollForResultP12(jobID) {
+      displayResultP12({ status: 'processing', message: 'Checking certificate status... This may take a moment.' });
+      const interval = setInterval(async () => {
+        try {
+          const resultResponse = await fetch(`/result/${jobID}`);
+          if (!resultResponse.ok) {
+            if (resultResponse.status === 404) return;
+            throw new Error('Failed to fetch result');
+          }
+          const result = await resultResponse.json();
+          if ((result.status && result.status !== 'processing') || (result.Status && result.Status !== 'processing')) {
+            clearInterval(interval);
+            setLoadingP12(false);
+            displayResultP12(result);
+          }
+        } catch (err) {
+          clearInterval(interval);
+          setLoadingP12(false);
+          displayResultP12({ status: 'error', message: err.message });
+        }
+      }, 2000);
+    }
+
+    function setLoadingIPA(isLoading, message = '') {
+      if (!els.submitButtonIPA) return;
+      els.submitButtonIPA.disabled = isLoading;
+      els.spinnerIPA.classList.toggle('hidden', !isLoading);
+      els.buttonTextIPA.textContent = isLoading ? 'Analyzing...' : 'Analyze IPA';
+      const s = document.getElementById('statusIPA');
+      s.textContent = message;
+      s.classList.toggle('hidden', !message);
+    }
+
+    function resetIPAForm() {
+      if (!els.uploadFormIPA) return;
+      els.uploadFormIPA.reset();
+      document.getElementById('ipa-file-name').textContent = 'No file selected';
+      document.getElementById('ipa-file-name').classList.add('file-empty');
+      document.getElementById('ipa-file-sub').textContent = 'Accepts .ipa (max 3 MB)';
+
+      document.getElementById('resultCardIPA').classList.add('hidden');
+      document.getElementById('ocspResultsContainer').innerHTML = '';
+      document.getElementById('moreInfoIPA').classList.add('hidden');
+      document.getElementById('detailsIPA').classList.add('hidden');
+      setLoadingIPA(false);
+    }
+
+    async function handleIPASubmit(e) {
+      e.preventDefault();
+      const file = document.getElementById('ipafile').files[0];
+      if (!file) return;
+
+      setLoadingIPA(true, 'Reading IPA file...');
+      document.getElementById('resultCardIPA').classList.add('hidden');
+
+      try {
+        const provisionData = await extractProvisionFile(file);
+        setLoadingIPA(true, 'Parsing provisioning profile...');
+        const profile = parseProvisioningProfile(provisionData);
+        displayProfileInfo(profile);
+        setLoadingIPA(true, 'Checking certificate status...');
+        await checkIPACerts(profile.DeveloperCertificates);
+        setLoadingIPA(false);
+        document.getElementById('resultCardIPA').classList.remove('hidden');
+      } catch (err) {
+        setLoadingIPA(false);
+        const s = document.getElementById('statusIPA');
+        s.textContent = `Error: ${err.message}`;
+        s.classList.remove('hidden');
+      }
+    }
+
+    async function extractProvisionFile(ipaFile) {
+      const zip = await JSZip.loadAsync(ipaFile);
+      const provisionFile = zip.file(/Payload\/.*\.app\/embedded\.mobileprovision$/i);
+      if (provisionFile && provisionFile.length > 0) {
+        return provisionFile[0].async('uint8array');
+      }
+      const metadataFile = zip.file(/iTunesMetadata\.plist$/i);
+      if (metadataFile && metadataFile.length > 0) {
+        throw new Error('This appears to be an encrypted App Store app. It cannot be analyzed because it lacks a provisioning profile.');
+      }
+      throw new Error('Could not find "embedded.mobileprovision" file in the IPA.');
+    }
+
+    function parseProvisioningProfile(fileData) {
+      let rawString;
+      if (fileData instanceof Uint8Array || fileData instanceof ArrayBuffer) {
+        const decoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
+        rawString = decoder.decode(fileData);
+      } else if (typeof fileData === 'string') {
+        rawString = fileData;
+      } else {
+        try {
+          rawString = String.fromCharCode.apply(null, new Uint8Array(fileData));
+        } catch (e) {
+          throw new Error('Unsupported provisioning data format');
+        }
+      }
+
+      const xmlStart = rawString.indexOf('<?xml');
+      const xmlEnd = rawString.indexOf('</plist>');
+      if (xmlStart === -1 || xmlEnd === -1) throw new Error('Could not find XML plist inside provisioning file.');
+      const xmlString = rawString.slice(xmlStart, xmlEnd + 8);
+      const parser = new DOMParser();
+      const xmlDoc = parser.parseFromString(xmlString, 'application/xml');
+
+      const getPlistValue = (key) => {
+        const keyNode = Array.from(xmlDoc.getElementsByTagName('key')).find(k => k.textContent === key);
+        if (!keyNode) return null;
+        return keyNode.nextElementSibling;
+      };
+      const getPlistBool = (key) => {
+        const node = getPlistValue(key);
+        return node ? node.tagName === 'true' : false;
+      };
+      const profile = {};
+      profile.Name = getPlistValue('Name')?.textContent;
+      profile.TeamName = getPlistValue('TeamName')?.textContent;
+      profile.ExpirationDate = new Date(getPlistValue('ExpirationDate')?.textContent);
+      profile.TeamIdentifier = getPlistValue('TeamIdentifier')?.getElementsByTagName('string')[0]?.textContent;
+      profile.ProvisionsAllDevices = getPlistBool('ProvisionsAllDevices');
+      profile.getTaskAllow = getPlistBool('get-task-allow');
+      const provisionedDevicesNode = getPlistValue('ProvisionedDevices');
+      const allDevices = provisionedDevicesNode ? Array.from(provisionedDevicesNode.getElementsByTagName('string')).map(s => s.textContent) : [];
+      profile.ProvisionedDevices = allDevices;
+      const devCertsNode = getPlistValue('DeveloperCertificates');
+      profile.DeveloperCertificates = devCertsNode ? Array.from(devCertsNode.getElementsByTagName('data')).map(d => d.textContent.replace(/\s/g, '')) : [];
+      return profile;
+    }
+
+    function displayProfileInfo(profile) {
+      document.getElementById('ipaProfileName').textContent = profile.Name || 'Unknown Profile';
+      document.getElementById('ipaTeamID').textContent = `Team ID: ${profile.TeamIdentifier || 'N/A'}`;
+      document.getElementById('ipaExpiration').textContent = `Expires: ${profile.ExpirationDate.toLocaleString() || 'N/A'}`;
+      const profileNameLower = (profile.Name || '').toLowerCase();
+      // maplesign note (keeps parity with old behavior)
+      const maplesign = profileNameLower.includes('ms ') || profileNameLower.includes('maplesign') || profileNameLower.includes('kravasign');
+      document.getElementById('maplesignNote')?.classList.toggle('hidden', !maplesign);
+
+      const isDev = profile.getTaskAllow;
+      const isEnterprise = profile.ProvisionsAllDevices;
+      const hasDevices = profile.ProvisionedDevices.length > 0;
+      const isAdHoc = hasDevices && !isDev && !isEnterprise;
+
+      setMeter('meterEnterprise', isEnterprise ? 100 : 0, 'meterEnterpriseText');
+      setMeter('meterAdHoc', isAdHoc ? 100 : 0, 'meterAdHocText');
+      setMeter('meterDev', isDev ? 100 : 0, 'meterDevText');
+
+      const deviceCount = profile.ProvisionedDevices.length;
+      if (deviceCount > 0) {
+        document.getElementById('deviceCount').textContent = deviceCount;
+        document.getElementById('deviceList').innerHTML = profile.ProvisionedDevices.join('<br>');
+        document.getElementById('moreInfoIPA').classList.remove('hidden');
+      } else {
+        document.getElementById('moreInfoIPA').classList.add('hidden');
+      }
+    }
+
+    function setMeter(elementId, percentage, textId) {
+      const el = document.getElementById(elementId);
+      const txt = textId ? document.getElementById(textId) : null;
+      if (el) el.style.width = percentage + '%';
+      if (txt) txt.textContent = percentage + '%';
+    }
+
+    async function checkIPACerts(certsBase64) {
+      const container = document.getElementById('ocspResultsContainer');
+      container.innerHTML = `<div class="flex items-center text-slate-300">${icons.processing}<span class="ml-3">Checking ${certsBase64.length} certificate(s)...</span></div>`;
+      try {
+        const response = await fetch('/check-ipa-certs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ certs: certsBase64 }) });
+        if (!response.ok) throw new Error(`Server error: ${response.statusText}`);
+        const results = await response.json();
+        container.innerHTML = '';
+        let mainSignerSet = false;
+        results.forEach((res, i) => {
+          const style = styles[res.status] || styles.error;
+          if (!mainSignerSet && res.subject) {
+            const cn = res.subject.match(/CN=([^,]+)/);
+            if (cn && cn[1]) {
+              document.getElementById('ipaSigner').textContent = `Signer: ${cn[1]}`;
+              mainSignerSet = true;
+            }
+          }
+          const detailsId = `cert-details-${i}`;
+          const card = document.createElement('div');
+          card.className = `p-3 rounded-md ${style.bg} ${style.text}`;
+          card.innerHTML = `
+            <div class="flex gap-3 items-start">
+              <div class="${style.iconBg} p-2 rounded-full">${icons[res.status] || icons.error}</div>
+              <div class="flex-1">
+                <div class="font-semibold">${(res.status.charAt(0).toUpperCase() + res.status.slice(1))}</div>
+                <div class="text-xs opacity-90 mt-1">${res.message || ''}</div>
+                <div class="mt-2 text-xs mono-break">
+                  <div title="${res.subject}"><strong>Subject:</strong> ${res.subject || 'N/A'}</div>
+                  <div><strong>Serial:</strong> <span class="font-mono">${res.serial || 'N/A'}</span></div>
+                  ${res.revoked_at ? `<div><strong>Revoked:</strong> ${new Date(res.revoked_at).toLocaleString()}</div>` : ''}
+                </div>
+                <button class="mt-2 text-sm text-indigo-200" onclick="toggleDetails('${detailsId}')">Show Full Cert Info</button>
+                <div id="${detailsId}" class="mt-2 hidden">
+                  <pre class="text-xs mono-break">${res.cert_info || ''}</pre>
+                </div>
+              </div>
+            </div>
+          `;
+          container.appendChild(card);
+        });
+      } catch (err) {
+        container.innerHTML = `<div class="p-3 rounded-md bg-red-600 text-red-100"><div class="font-semibold">Error</div><div class="text-sm">${err.message}</div></div>`;
+      }
+    }
+
+    function setFileUI(elIdName, file) {
+      const nameEl = document.getElementById(elIdName + '-file-name');
+      const subEl = document.getElementById(elIdName + '-file-sub');
+      if (!file) {
+        nameEl.textContent = 'No file selected';
+        nameEl.classList.add('file-empty');
+        return;
+      }
+      const sizeKB = (file.size / 1024).toFixed(1);
+      nameEl.textContent = file.name;
+      nameEl.classList.remove('file-empty');
+      subEl.textContent = `${sizeKB} KB`;
+    }
+
+    function onP12FileChange(ev) {
+      const f = ev.target.files[0];
+      const p12Info = document.getElementById('p12Info');
+      const p12Warn = document.getElementById('p12Warning');
+      p12Warn.classList.add('hidden');
+      setFileUI('p12', f);
+      if (!f) {
+        p12Info.classList.add('hidden');
+        validateP12Form();
+        return;
+      }
+      p12Info.classList.remove('hidden');
+      p12Info.textContent = `Selected: ${f.name} — ${(f.size/1024).toFixed(1)} KB`;
+      if (f.size > MAX_UPLOAD_BYTES) {
+        p12Warn.textContent = `Warning: file is larger than ${(MAX_UPLOAD_BYTES/1024/1024).toFixed(1)} MB and may be rejected by server.`;
+        p12Warn.classList.remove('hidden');
+      } else {
+        p12Warn.classList.add('hidden');
+      }
+      validateP12Form();
+    }
+
+    // NOTE: do not parse mp on selection anymore — only display file info.
+    function onMPFileChange(ev) {
+      const f = ev.target.files[0];
+      setFileUI('mp', f);
+      // keep mpInfo hidden until Check Status is pressed (handleP12Submit will show/parse it)
+      document.getElementById('mpInfo').classList.add('hidden');
+      document.getElementById('mpSummary').classList.add('hidden');
+      document.getElementById('mpResultCard').classList.add('hidden');
+      document.getElementById('mpDeviceList').classList.add('hidden');
+      document.getElementById('mpError').classList.add('hidden');
+    }
+
+    function displayMPProfileSummary(profile) {
+      const mpResult = document.getElementById('mpResultCard');
+      document.getElementById('mpProfileName').textContent = profile.Name || 'Unknown Profile';
+      document.getElementById('mpTeamID').textContent = `Team ID: ${profile.TeamIdentifier || 'N/A'}`;
+      document.getElementById('mpExpiration').textContent = `Expires: ${profile.ExpirationDate.toLocaleString() || 'N/A'}`;
+
+      const isDev = profile.getTaskAllow;
+      const isEnterprise = profile.ProvisionsAllDevices;
+      const hasDevices = profile.ProvisionedDevices.length > 0;
+      const isAdHoc = hasDevices && !isDev && !isEnterprise;
+
+      setMeter('mpMeterEnterprise', isEnterprise ? 100 : 0, 'mpMeterEnterpriseText');
+      setMeter('mpMeterAdHoc', isAdHoc ? 100 : 0, 'mpMeterAdHocText');
+      setMeter('mpMeterDev', isDev ? 100 : 0, 'mpMeterDevText');
+
+      const deviceCount = profile.ProvisionedDevices.length;
+      document.getElementById('mpDeviceCountVal').textContent = deviceCount;
+      if (deviceCount > 0) {
+        document.getElementById('mpDeviceList').innerHTML = profile.ProvisionedDevices.join('<br>');
+        document.getElementById('mpDeviceList').classList.remove('hidden');
+      } else {
+        document.getElementById('mpDeviceList').classList.add('hidden');
+      }
+
+      mpResult.classList.remove('hidden');
+      document.getElementById('mpSummary').classList.remove('hidden');
+    }
+
+    function onIPAFileChange(ev) {
+      const f = ev.target.files[0];
+      setFileUI('ipa', f);
+    }
+
+    function parseProvisionSummary(fileData) {
+      const profile = parseProvisioningProfile(fileData);
+      return {
+        Name: profile.Name,
+        TeamName: profile.TeamName,
+        TeamIdentifier: profile.TeamIdentifier,
+        Expires: profile.ExpirationDate ? profile.ExpirationDate.toLocaleString() : null,
+        DeviceCount: profile.ProvisionedDevices ? profile.ProvisionedDevices.length : 0
+      };
+    }
+
+    function validateP12Form() {
+      const p12file = document.getElementById('p12file').files[0];
+      const submit = document.getElementById('submitButtonP12');
+      if (!p12file) {
+        submit.disabled = true;
+        return;
+      }
+      if (p12file.size > MAX_UPLOAD_BYTES) {
+        submit.disabled = true;
+        return;
+      }
+      submit.disabled = false;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      els = {
+        uploadFormP12: document.getElementById('uploadFormP12'),
+        submitButtonP12: document.getElementById('submitButtonP12'),
+        spinnerP12: document.getElementById('spinnerP12'),
+        buttonTextP12: document.getElementById('buttonTextP12'),
+        uploadFormIPA: document.getElementById('uploadFormIPA'),
+        submitButtonIPA: document.getElementById('submitButtonIPA'),
+        spinnerIPA: document.getElementById('spinnerIPA'),
+        buttonTextIPA: document.getElementById('buttonTextIPA')
+      };
+
+      els.uploadFormP12.addEventListener('submit', handleP12Submit);
+      els.uploadFormIPA.addEventListener('submit', handleIPASubmit);
+      document.getElementById('resetP12').addEventListener('click', resetP12Form);
+      document.getElementById('resetIPA').addEventListener('click', resetIPAForm);
+
+      document.querySelectorAll('.segmented button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tab = btn.dataset.tab;
+          showTab(tab);
+          const scrollable = document.querySelector('.card-content-scroll');
+          if (scrollable) scrollable.scrollTop = 0;
+        });
+      });
+
+      document.getElementById('p12file').addEventListener('change', onP12FileChange);
+      document.getElementById('mobileprovision').addEventListener('change', onMPFileChange);
+      document.getElementById('ipafile').addEventListener('change', onIPAFileChange);
+
+      showTab('p12');
+      validateP12Form();
+    });
+  </script>
+</body>
+</html>
